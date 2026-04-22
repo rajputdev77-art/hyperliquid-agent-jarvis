@@ -1,0 +1,46 @@
+[tool.poetry]
+name = "hyperliquid-agent-jarvis"
+version = "0.1.0"
+description = "Paper-trading AI agent for Hyperliquid perpetuals, driven by Gemini. Zero-cost build."
+authors = ["You <you@example.com>"]
+readme = "README.md"
+packages = [{ include = "src" }]
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.15"
+
+# Market data (read-only use in paper mode)
+hyperliquid-python-sdk = "^0.17.0"
+
+# LLM
+google-generativeai = "^0.8.3"
+
+# Core
+python-dotenv = "^1.0.1"
+aiohttp = "^3.10.0"
+requests = "^2.32.0"
+
+# Numerics / analysis
+pandas = "^2.2.0"
+numpy = "^2.0.0"
+
+# HTTP API
+fastapi = "^0.115.0"
+uvicorn = { extras = ["standard"], version = "^0.32.0" }
+
+# Notebook
+jupyter = "^1.1.0"
+matplotlib = "^3.9.0"
+seaborn = "^0.13.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.0"
+ruff = "^0.7.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"

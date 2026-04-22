@@ -1,0 +1,52 @@
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Data + logs (generated at runtime)
+data/
+logs/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+diary.jsonl
+decisions.jsonl
+prompts.log
+llm_requests.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Poetry (keep lock file, ignore cache)
+.poetry/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# OS
+Thumbs.db
+
+# Dashboard (has its own subdir .gitignore)
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
