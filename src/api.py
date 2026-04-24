@@ -28,6 +28,20 @@ def init_api(broker: PaperBroker) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.get("/")
+    def root():
+        return {
+            "service": "hyperliquid-agent-jarvis",
+            "paper_trading": True,
+            "endpoints": {
+                "/health": "liveness ping",
+                "/account": "balance, pnl, open position count",
+                "/positions": "open positions with TP/SL",
+                "/history?limit=N": "closed trades (default 200)",
+                "/decisions?limit=N": "recent LLM decisions (default 50)",
+            },
+        }
+
     @app.get("/health")
     def health():
         return {"ok": True}
