@@ -46,7 +46,8 @@ env/
 # OS
 Thumbs.db
 
-# Dashboard (has its own subdir .gitignore)
-dashboard/node_modules/
-dashboard/.next/
-dashboard/out/
+# Dashboard lives in its own repo — not tracked here
+dashboard/
+
+# Sanket's reference repo (local copy for inspection only)
+hyperliquid-trading-agent-master/

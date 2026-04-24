@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{ include = "src" }]
 
 [tool.poetry.dependencies]
-python = ">=3.12,<3.15"
+python = ">=3.11,<3.15"
 
 # Market data (read-only use in paper mode)
 hyperliquid-python-sdk = "^0.17.0"

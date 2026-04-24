@@ -23,7 +23,8 @@ import pathlib
 import time
 from datetime import datetime, timezone
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 
 from src.config_loader import CONFIG
 
@@ -97,7 +98,7 @@ class DecisionMaker:
         api_key = CONFIG.get("gemini_api_key")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY missing. Set it in .env.")
-        genai.configure(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
         self.model_name = CONFIG.get("llm_model") or "gemini-2.5-flash"
         self.max_tokens = int(CONFIG.get("max_tokens") or 4096)
         self.hyperliquid = hyperliquid  # not used for tool calls in this port
@@ -112,28 +113,30 @@ class DecisionMaker:
 
     def get_decision(self, assets: list[str], context: str) -> dict:
         system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(assets=json.dumps(list(assets)))
-        model = genai.GenerativeModel(
-            model_name=self.model_name,
+        gen_config = genai_types.GenerateContentConfig(
             system_instruction=system_prompt,
-            generation_config={
-                "temperature": 0.3,
-                "max_output_tokens": self.max_tokens,
-                "response_mime_type": "application/json",
-            },
+            response_mime_type="application/json",
+            temperature=0.3,
+            max_output_tokens=self.max_tokens,
         )
 
         raw_text = ""
         error_msg: str | None = None
         for attempt in (1, 2):
             try:
-                response = model.generate_content(context)
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=context,
+                    config=gen_config,
+                )
                 raw_text = (response.text or "").strip()
                 break
-            except Exception as exc:  # includes 429 rate-limit
+            except Exception as exc:  # includes 429 rate-limit and 503 overload
                 error_msg = f"{type(exc).__name__}: {exc}"
                 log.warning("Gemini call failed (attempt %s): %s", attempt, error_msg)
-                if "429" in str(exc) or "rate" in str(exc).lower():
-                    time.sleep(60)
+                s = str(exc).lower()
+                if "429" in s or "rate" in s or "503" in s or "unavailable" in s or "overload" in s:
+                    time.sleep(30)
                     continue
                 break
 

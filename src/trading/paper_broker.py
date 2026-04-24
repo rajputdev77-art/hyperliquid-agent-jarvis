@@ -490,6 +490,12 @@ class PaperBroker:
         indicator_snapshots: list[dict],
     ) -> None:
         now = self._now()
+        def _s(v) -> str:
+            if v is None:
+                return ""
+            if isinstance(v, (dict, list)):
+                return json.dumps(v, default=str)
+            return str(v)
         for d in decisions:
             self._conn.execute(
                 "INSERT INTO decisions (timestamp, cycle, asset, action, allocation_usd, "
@@ -498,9 +504,9 @@ class PaperBroker:
                 (
                     now, cycle, d.get("asset"), d.get("action"),
                     float(d.get("allocation_usd") or 0),
-                    d.get("rationale") or "",
-                    d.get("exit_plan") or "",
-                    reasoning,
+                    _s(d.get("rationale")),
+                    _s(d.get("exit_plan")),
+                    _s(reasoning),
                     None,
                     account_value,
                 ),
