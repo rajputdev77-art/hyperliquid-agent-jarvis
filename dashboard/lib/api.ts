@@ -53,10 +53,67 @@ export type Decision = {
   account_value: number;
 };
 
+export type Combined = {
+  crypto: Account;
+  stocks: Account | null;
+  total: Account;
+};
+
+export type Market = "crypto" | "stocks" | "combined";
+
+const prefix = (m: Market) => (m === "stocks" ? "/stocks" : "");
+
 export const api = {
-  account: () => j<Account>("/account"),
-  positions: () => j<{ positions: Position[] }>("/positions"),
-  history: (limit = 200) => j<{ trades: Trade[] }>(`/history?limit=${limit}`),
-  decisions: (limit = 50) => j<{ decisions: Decision[] }>(`/decisions?limit=${limit}`),
-  health: () => j<{ ok: boolean }>("/health"),
+  account: (m: Market) =>
+    m === "combined"
+      ? j<Combined>("/combined/account")
+      : j<Account>(`${prefix(m)}/account`),
+  positions: (m: Market) =>
+    j<{ positions: Position[] }>(`${prefix(m === "combined" ? "crypto" : m)}/positions`),
+  positionsBoth: async () => {
+    const [c, s] = await Promise.all([
+      j<{ positions: Position[] }>("/positions"),
+      j<{ positions: Position[] }>("/stocks/positions").catch(() => ({ positions: [] })),
+    ]);
+    return {
+      crypto: c.positions,
+      stocks: s.positions,
+    };
+  },
+  history: (m: Market, limit = 50) =>
+    j<{ trades: Trade[] }>(`${prefix(m === "combined" ? "crypto" : m)}/history?limit=${limit}`),
+  historyBoth: async (limit = 50) => {
+    const [c, s] = await Promise.all([
+      j<{ trades: Trade[] }>(`/history?limit=${limit}`),
+      j<{ trades: Trade[] }>(`/stocks/history?limit=${limit}`).catch(() => ({ trades: [] })),
+    ]);
+    // tag and merge
+    const tag = (rows: Trade[], market: "crypto" | "stocks") =>
+      rows.map((t) => ({ ...t, market }));
+    return {
+      trades: [...tag(c.trades, "crypto"), ...tag(s.trades, "stocks")]
+        .sort((a, b) => (b.closed_at ?? "").localeCompare(a.closed_at ?? ""))
+        .slice(0, limit),
+    };
+  },
+  decisions: (m: Market, limit = 20) =>
+    j<{ decisions: Decision[] }>(
+      `${prefix(m === "combined" ? "crypto" : m)}/decisions?limit=${limit}`,
+    ),
+  decisionsBoth: async (limit = 20) => {
+    const [c, s] = await Promise.all([
+      j<{ decisions: Decision[] }>(`/decisions?limit=${limit}`),
+      j<{ decisions: Decision[] }>(`/stocks/decisions?limit=${limit}`).catch(() => ({
+        decisions: [],
+      })),
+    ]);
+    const tag = (rows: Decision[], market: "crypto" | "stocks") =>
+      rows.map((d) => ({ ...d, market }));
+    return {
+      decisions: [...tag(c.decisions, "crypto"), ...tag(s.decisions, "stocks")]
+        .sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""))
+        .slice(0, limit),
+    };
+  },
+  health: () => j<{ ok: boolean; stocks_db?: boolean }>("/health"),
 };
