@@ -75,6 +75,10 @@ CONFIG = {
     "assets": _get("ASSETS"),
     "interval": _get("INTERVAL", "1h"),
 
+    # --- Opportunity scanner (stage-1 funnel over all Hyperliquid perps) ---
+    "scan_enabled": _get_bool("SCAN_ENABLED", True),
+    "scan_top_n": _get_int("SCAN_TOP_N", 15),
+
     # --- Risk ---
     "max_position_pct": _get("MAX_POSITION_PCT", "10"),
     "max_loss_per_position_pct": _get("MAX_LOSS_PER_POSITION_PCT", "20"),

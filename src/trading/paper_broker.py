@@ -113,15 +113,16 @@ class PaperBroker:
     Market-data methods delegate to an internal read-only `HyperliquidAPI`.
     """
 
-    def __init__(self) -> None:
-        self.db_path = pathlib.Path(CONFIG.get("database_path") or "./data/trades.db")
+    def __init__(self, provider: Any = None, db_path: str | None = None) -> None:
+        self.db_path = pathlib.Path(db_path or CONFIG.get("database_path") or "./data/trades.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.slippage_pct = float(CONFIG.get("paper_entry_slippage_pct") or 0.0)
         self.initial_balance = float(CONFIG.get("paper_starting_balance") or 1000.0)
         self._oid_seq = int(time.time() * 1000)  # monotonic fake order id
 
-        # Read-only market-data client
-        self.hl = HyperliquidAPI()
+        # Read-only market-data client. Defaults to Hyperliquid so crypto
+        # callers keep working. Stocks pass in an AlpacaAPI instance.
+        self.hl = provider if provider is not None else HyperliquidAPI()
 
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
