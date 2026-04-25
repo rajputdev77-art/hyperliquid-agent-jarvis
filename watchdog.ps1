@@ -4,11 +4,14 @@
 
 $ErrorActionPreference = 'SilentlyContinue'
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$healthUrl = 'http://localhost:8000/health'
-$startBat = Join-Path $projectDir 'start.bat'
 $logFile = Join-Path $projectDir 'logs\watchdog.log'
 
-# Ensure logs dir
+# Bots monitored: name, port, launcher script.
+$bots = @(
+    @{ name = 'crypto'; port = 8000; launcher = 'start.bat'        },
+    @{ name = 'stocks'; port = 8001; launcher = 'start-stocks.bat' }
+)
+
 New-Item -ItemType Directory -Force -Path (Split-Path $logFile) | Out-Null
 
 function Log([string]$msg) {
@@ -17,43 +20,50 @@ function Log([string]$msg) {
     Add-Content -Path $logFile -Value $line
 }
 
-function Is-BotAlive {
+function Is-BotAlive([int]$port) {
     try {
-        $r = Invoke-WebRequest -Uri $healthUrl -TimeoutSec 5 -UseBasicParsing
+        $r = Invoke-WebRequest -Uri "http://localhost:$port/health" -TimeoutSec 5 -UseBasicParsing
         return $r.StatusCode -eq 200
     } catch {
         return $false
     }
 }
 
-function Start-Bot {
-    Log "starting bot via $startBat"
-    Start-Process -FilePath $startBat -WorkingDirectory $projectDir -WindowStyle Minimized
+function Start-Bot([string]$name, [int]$port, [string]$launcher) {
+    $bat = Join-Path $projectDir $launcher
+    if (-not (Test-Path $bat)) { Log "[$name] launcher missing: $bat (skip)"; return }
+    Log "[$name] starting via $launcher"
+    # Kill anything stale on the port first
+    $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    if ($conn) {
+        $pidToKill = $conn.OwningProcess | Select-Object -First 1
+        if ($pidToKill) {
+            Log "[$name] killing stale pid $pidToKill on :$port"
+            Stop-Process -Id $pidToKill -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Process -FilePath $bat -WorkingDirectory $projectDir -WindowStyle Minimized
     Start-Sleep -Seconds 10
 }
 
-Log "watchdog online. project=$projectDir"
-$fails = 0
+Log "watchdog online. project=$projectDir bots=$($bots.Count)"
+$failCounters = @{}
+foreach ($b in $bots) { $failCounters[$b.name] = 0 }
+
 while ($true) {
-    if (Is-BotAlive) {
-        if ($fails -gt 0) { Log "bot recovered" }
-        $fails = 0
-    } else {
-        $fails += 1
-        Log "bot unreachable (fail #$fails)"
-        if ($fails -ge 2) {
-            Log "triggering restart"
-            # Kill whatever is on :8000
-            $conn = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
-            if ($conn) {
-                $pidToKill = $conn.OwningProcess | Select-Object -First 1
-                if ($pidToKill) {
-                    Log "killing stale pid $pidToKill"
-                    Stop-Process -Id $pidToKill -Force -ErrorAction SilentlyContinue
-                }
+    foreach ($b in $bots) {
+        $name = $b.name; $port = $b.port; $launcher = $b.launcher
+        if (Is-BotAlive $port) {
+            if ($failCounters[$name] -gt 0) { Log "[$name] recovered" }
+            $failCounters[$name] = 0
+        } else {
+            $failCounters[$name] += 1
+            Log "[$name] unreachable on :$port (fail #$($failCounters[$name]))"
+            if ($failCounters[$name] -ge 2) {
+                Log "[$name] triggering restart"
+                Start-Bot $name $port $launcher
+                $failCounters[$name] = 0
             }
-            Start-Bot
-            $fails = 0
         }
     }
     Start-Sleep -Seconds 60

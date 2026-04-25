@@ -28,8 +28,10 @@ try:
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest, StockLatestTradeRequest
     from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    from alpaca.data.enums import DataFeed
 except Exception as e:  # pragma: no cover
     StockHistoricalDataClient = None
+    DataFeed = None
     log.warning("alpaca-py not importable: %s", e)
 
 
@@ -63,7 +65,8 @@ class AlpacaAPI:
 
     async def get_current_price(self, asset: str) -> float:
         def _call():
-            req = StockLatestTradeRequest(symbol_or_symbols=[asset])
+            # IEX feed = free-tier real-time. SIP requires paid subscription.
+            req = StockLatestTradeRequest(symbol_or_symbols=[asset], feed=DataFeed.IEX)
             resp = self._data.get_stock_latest_trade(req)
             trade = resp.get(asset)
             if trade is None:
@@ -81,7 +84,8 @@ class AlpacaAPI:
 
         def _call():
             req = StockBarsRequest(
-                symbol_or_symbols=[asset], timeframe=tf, start=start, end=end, limit=count
+                symbol_or_symbols=[asset], timeframe=tf, start=start, end=end,
+                limit=count, feed=DataFeed.IEX,
             )
             bars = self._data.get_stock_bars(req)
             raw = bars.data.get(asset, [])
@@ -89,11 +93,11 @@ class AlpacaAPI:
             for b in raw[-count:]:
                 out.append({
                     "t": int(b.timestamp.timestamp() * 1000),
-                    "o": float(b.open),
-                    "h": float(b.high),
-                    "l": float(b.low),
-                    "c": float(b.close),
-                    "v": float(b.volume or 0),
+                    "open": float(b.open),
+                    "high": float(b.high),
+                    "low": float(b.low),
+                    "close": float(b.close),
+                    "volume": float(b.volume or 0),
                 })
             return out
 
