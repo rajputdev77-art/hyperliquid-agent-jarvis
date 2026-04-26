@@ -347,13 +347,17 @@ def main() -> None:
     if market == "alpaca":
         from src.trading.alpaca_api import AlpacaAPI
         provider = AlpacaAPI()
-        log.info("Market=ALPACA stocks — provider=Alpaca, db=%s, port=%s", db_path, api_port)
+        model = CONFIG.get("llm_model_stocks") or CONFIG.get("llm_model")
+        log.info("Market=ALPACA stocks — provider=Alpaca, db=%s, port=%s, model=%s",
+                 db_path, api_port, model)
     else:
         provider = None  # PaperBroker defaults to HyperliquidAPI
-        log.info("Market=HYPERLIQUID crypto — db=%s, port=%s", db_path, api_port)
+        model = CONFIG.get("llm_model_crypto") or CONFIG.get("llm_model")
+        log.info("Market=HYPERLIQUID crypto — db=%s, port=%s, model=%s",
+                 db_path, api_port, model)
 
     broker = PaperBroker(provider=provider, db_path=db_path)
-    agent = DecisionMaker(hyperliquid=broker.hl)
+    agent = DecisionMaker(hyperliquid=broker.hl, model_override=model)
     risk = RiskManager()
     _start_api_thread(broker, port=api_port)
 

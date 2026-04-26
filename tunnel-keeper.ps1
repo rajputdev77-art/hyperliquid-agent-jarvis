@@ -7,7 +7,7 @@
 # Run via:  powershell -ExecutionPolicy Bypass -File tunnel-keeper.ps1
 # Or double-click tunnel-keeper.bat (which wraps this).
 
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Continue'   # don't swallow real errors silently
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $logFile    = Join-Path $projectDir 'logs\tunnel-keeper.log'
 $cfLog      = Join-Path $projectDir 'logs\cloudflared.log'
@@ -69,40 +69,48 @@ function Push-VercelEnv([string]$url) {
 }
 
 # ---- main loop -------------------------------------------------------
-Log "tunnel-keeper online. project=$projectDir"
+# Wrap the whole loop in try/catch so transient errors (network blips,
+# Vercel CLI hiccups) don't kill the keeper itself.
+
+Log "tunnel-keeper online. project=$projectDir pid=$PID"
 $lastPushedUrl = $null
-$bootDelay = 12   # seconds to wait after start before first URL probe
+$bootDelay = 15   # seconds to wait after start before first URL probe
 
 while ($true) {
-    # 1) ensure cloudflared is running
-    $running = Get-Process -Name cloudflared -ErrorAction SilentlyContinue
-    if (-not $running) {
-        Log "cloudflared not running"
-        Start-Tunnel
-        Start-Sleep -Seconds $bootDelay
-    }
-
-    # 2) read URL from log
-    $url = Get-TunnelUrl
-
-    # 3) verify it actually serves /health (catches the case where the URL
-    #    is published but cloudflared has lost connectivity to the origin)
-    if ($url -and (Test-TunnelAlive $url)) {
-        if ($url -ne $lastPushedUrl) {
-            Log "tunnel URL changed: $url"
-            try {
-                Push-VercelEnv $url
-                $lastPushedUrl = $url
-            } catch {
-                Log "vercel push failed: $_"
-            }
+    try {
+        # 1) ensure cloudflared is running
+        $running = Get-Process -Name cloudflared -ErrorAction SilentlyContinue
+        if (-not $running) {
+            Log "cloudflared not running -> spawning"
+            Start-Tunnel
+            Start-Sleep -Seconds $bootDelay
         }
-    } else {
-        Log "tunnel not healthy (url=$url). killing + restarting"
-        Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force
-        Start-Sleep -Seconds 3
-        Start-Tunnel
-        Start-Sleep -Seconds $bootDelay
+
+        # 2) read URL from log
+        $url = Get-TunnelUrl
+
+        # 3) verify it actually serves /health (catches the case where the URL
+        #    is published but cloudflared has lost connectivity to the origin)
+        if ($url -and (Test-TunnelAlive $url)) {
+            if ($url -ne $lastPushedUrl) {
+                Log "tunnel URL changed: $url"
+                try {
+                    Push-VercelEnv $url
+                    $lastPushedUrl = $url
+                } catch {
+                    Log "vercel push failed: $_"
+                }
+            }
+        } else {
+            Log "tunnel not healthy (url=$url). killing + restarting"
+            Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 3
+            Start-Tunnel
+            Start-Sleep -Seconds $bootDelay
+        }
+    } catch {
+        Log "loop iteration error: $_ — continuing"
+        Start-Sleep -Seconds 10
     }
 
     Start-Sleep -Seconds 60
