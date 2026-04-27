@@ -1,4 +1,4 @@
-# jarvis — watchdog. Pings /health every 60s; auto-restarts bot if it doesn't respond.
+# jarvis - watchdog. Pings /health every 60s; auto-restarts bot if it doesn't respond.
 # Run with:  powershell -ExecutionPolicy Bypass -File watchdog.ps1
 # Or double-click watchdog.bat which wraps this.
 
@@ -47,7 +47,7 @@ function Start-Bot([string]$name, [int]$port, [string]$launcher) {
 }
 
 function Test-TunnelKeeperAlive {
-    # Tunnel-keeper isn't an HTTP server — we check by looking at its log.
+    # Tunnel-keeper isn't an HTTP server - we check by looking at its log.
     # If the log was last touched > 5 minutes ago the keeper is dead.
     $cfKeeperLog = Join-Path $projectDir 'logs\tunnel-keeper.log'
     if (-not (Test-Path $cfKeeperLog)) { return $false }
@@ -100,7 +100,7 @@ while ($true) {
             }
         }
     } catch {
-        Log "watchdog loop error: $_ — continuing"
+        Log "watchdog loop error: $_ - continuing"
     }
     Start-Sleep -Seconds 60
 }

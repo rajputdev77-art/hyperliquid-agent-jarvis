@@ -1,6 +1,6 @@
-# jarvis — one-click full recovery.
+# jarvis - one-click full recovery.
 # Kills everything (bots, tunnel, keeper), waits, restarts in correct order,
-# verifies all health endpoints, opens the dashboard. Safe to run anytime —
+# verifies all health endpoints, opens the dashboard. Safe to run anytime -
 # nothing in this script is destructive to data, only to processes.
 
 $ErrorActionPreference = 'Continue'
@@ -37,7 +37,7 @@ function Test-Health([int]$port) {
 }
 
 # ---- 1. Stop everything ---------------------------------------------
-Banner "STAGE 1 — stop everything"
+Banner "STAGE 1 - stop everything"
 Kill-Port 8000 'crypto bot'
 Kill-Port 8001 'stocks bot'
 Step "killing cloudflared"
@@ -52,7 +52,7 @@ Get-WmiObject Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction Silen
 Start-Sleep -Seconds 4
 
 # ---- 2. Start crypto bot --------------------------------------------
-Banner "STAGE 2 — restart crypto bot"
+Banner "STAGE 2 - restart crypto bot"
 Start-Process -FilePath (Join-Path $projectDir 'start.bat') -WorkingDirectory $projectDir -WindowStyle Minimized
 Step "waiting for :8000 to come up..."
 $ok = $false
@@ -60,10 +60,10 @@ for ($i = 0; $i -lt 24; $i++) {
     Start-Sleep -Seconds 2
     if (Test-Health 8000) { $ok = $true; break }
 }
-if ($ok) { OK "crypto bot live on :8000" } else { Fail "crypto bot did not respond after 48s — check logs/agent.log" }
+if ($ok) { OK "crypto bot live on :8000" } else { Fail "crypto bot did not respond after 48s - check logs/agent.log" }
 
 # ---- 3. Start stocks bot --------------------------------------------
-Banner "STAGE 3 — restart stocks bot"
+Banner "STAGE 3 - restart stocks bot"
 Start-Process -FilePath (Join-Path $projectDir 'start-stocks.bat') -WorkingDirectory $projectDir -WindowStyle Minimized
 Step "waiting for :8001 to come up..."
 $ok = $false
@@ -71,10 +71,10 @@ for ($i = 0; $i -lt 24; $i++) {
     Start-Sleep -Seconds 2
     if (Test-Health 8001) { $ok = $true; break }
 }
-if ($ok) { OK "stocks bot live on :8001" } else { Fail "stocks bot did not respond after 48s — check logs/stocks-bot.log" }
+if ($ok) { OK "stocks bot live on :8001" } else { Fail "stocks bot did not respond after 48s - check logs/stocks-bot.log" }
 
 # ---- 4. Start tunnel keeper -----------------------------------------
-Banner "STAGE 4 — restart tunnel keeper"
+Banner "STAGE 4 - restart tunnel keeper"
 Start-Process -FilePath (Join-Path $projectDir 'tunnel-keeper.bat') -WorkingDirectory $projectDir -WindowStyle Minimized
 Step "waiting for cloudflared + first URL push (this can take ~45s)..."
 Start-Sleep -Seconds 30
@@ -82,7 +82,7 @@ $cfRunning = Get-Process -Name cloudflared -ErrorAction SilentlyContinue
 if ($cfRunning) { OK "cloudflared running (pid $($cfRunning.Id))" } else { Fail "cloudflared not detected" }
 
 # ---- 5. Start watchdog ----------------------------------------------
-Banner "STAGE 5 — restart watchdog"
+Banner "STAGE 5 - restart watchdog"
 Start-Process -FilePath (Join-Path $projectDir 'watchdog.bat') -WorkingDirectory $projectDir -WindowStyle Minimized
 OK "watchdog spawned"
 
