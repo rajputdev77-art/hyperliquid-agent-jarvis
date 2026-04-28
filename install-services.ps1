@@ -19,6 +19,12 @@ $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $pythonExe  = Join-Path $projectDir '.venv\Scripts\python.exe'
 $cfBin      = Join-Path $projectDir 'bin\cloudflared.exe'
 $cfLog      = Join-Path $projectDir 'logs\cloudflared.log'
+$ltLog      = Join-Path $projectDir 'logs\localtunnel.log'
+# npx.cmd ships with Node — invoke localtunnel without a global install.
+$npxCmd     = (Get-Command npx.cmd -EA SilentlyContinue).Source
+if (-not $npxCmd) { $npxCmd = "$env:ProgramFiles\nodejs\npx.cmd" }
+$ltSubdomain = $env:LT_SUBDOMAIN
+if (-not $ltSubdomain) { $ltSubdomain = 'jarvis-trading' }
 
 # Each task: one executable + its arguments. No shell in the chain.
 $tasks = @(
@@ -35,9 +41,13 @@ $tasks = @(
         cwd     = $projectDir
     },
     @{
-        name    = 'jarvis-cloudflared'
-        cmd     = $cfBin
-        args    = "tunnel --url http://localhost:8000 --protocol http2 --logfile `"$cfLog`""
+        # Localtunnel: free, gives a STABLE subdomain (jarvis-trading.loca.lt)
+        # that survives reboots. Cloudflare quick tunnels rotated URLs and
+        # eventually rate-limited us with error 1034. Localtunnel needs no
+        # account and no rotation logic.
+        name    = 'jarvis-localtunnel'
+        cmd     = $npxCmd
+        args    = "--yes localtunnel --port 8000 --subdomain $ltSubdomain"
         cwd     = $projectDir
     },
     @{

@@ -18,6 +18,17 @@ if (-not (Test-Path $vercelCmd)) { $vercelCmd = "vercel" }
 
 New-Item -ItemType Directory -Force -Path (Split-Path $logFile) | Out-Null
 
+# Singleton check: if another keeper is already running, exit. Prevents
+# the watchdog/scheduler from accidentally spawning duplicates that fight
+# for the same log file.
+$me = $PID
+$others = Get-WmiObject Win32_Process -Filter "Name = 'powershell.exe'" -EA SilentlyContinue |
+          Where-Object { $_.CommandLine -match 'tunnel-keeper\.ps1' -and $_.ProcessId -ne $me }
+if ($others) {
+    Write-Host "another tunnel-keeper is already running (pids: $(($others | ForEach-Object ProcessId) -join ','))"
+    exit 0
+}
+
 function Log([string]$msg) {
     $line = "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg
     Write-Host $line

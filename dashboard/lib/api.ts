@@ -2,7 +2,16 @@ export const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function j<T>(path: string): Promise<T> {
-  const r = await fetch(`${API_URL}${path}`, { cache: "no-store" });
+  // bypass-tunnel-reminder skips localtunnel's interstitial warning page
+  // when the API is exposed via *.loca.lt. Harmless when the API is
+  // hosted directly (Cloudflare quick tunnel, named tunnel, etc).
+  const r = await fetch(`${API_URL}${path}`, {
+    cache: "no-store",
+    headers: {
+      "bypass-tunnel-reminder": "1",
+      "ngrok-skip-browser-warning": "1",
+    },
+  });
   if (!r.ok) throw new Error(`${path} ${r.status}`);
   return r.json();
 }
