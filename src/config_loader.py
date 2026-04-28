@@ -62,7 +62,11 @@ CONFIG = {
     # --- LLM (Gemini) ---
     "llm_provider": _get("LLM_PROVIDER", "gemini"),
     "gemini_api_key": _get("GEMINI_API_KEY"),
-    "llm_model": _get("LLM_MODEL", "gemini-2.5-flash"),
+    "llm_model": _get("LLM_MODEL", "gemini-2.5-flash-lite"),
+    # Per-market overrides — fall back to llm_model if unset. Used so each
+    # bot consumes its own daily quota bucket on the Gemini free tier.
+    "llm_model_crypto": _get("LLM_MODEL_CRYPTO"),
+    "llm_model_stocks": _get("LLM_MODEL_STOCKS"),
     "max_tokens": _get_int("MAX_TOKENS", 4096),
 
     # --- Hyperliquid (read-only in paper mode; not required) ---
@@ -74,6 +78,13 @@ CONFIG = {
     # --- Runtime ---
     "assets": _get("ASSETS"),
     "interval": _get("INTERVAL", "1h"),
+
+    # --- Opportunity scanner (stage-1 funnel over all Hyperliquid perps) ---
+    "scan_enabled": _get_bool("SCAN_ENABLED", True),
+    "scan_top_n": _get_int("SCAN_TOP_N", 15),
+
+    # --- SL hygiene ---
+    "min_sl_distance_pct": _get_float("MIN_SL_DISTANCE_PCT", 2.0),
 
     # --- Risk ---
     "max_position_pct": _get("MAX_POSITION_PCT", "10"),
