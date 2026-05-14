@@ -33,6 +33,7 @@ from src.config_loader import CONFIG, validate_config
 from src.indicators.local_indicators import compute_all, last_n, latest
 from src.risk_manager import RiskManager
 from src.trading.paper_broker import PaperBroker
+from src.live_status import record_snapshot as _live_record_snapshot
 from src.utils.prompt_utils import json_default, round_or_none, round_series
 
 
@@ -280,6 +281,28 @@ async def trading_loop(broker: PaperBroker, agent: DecisionMaker, risk: RiskMana
                 account_value=account_value,
                 indicator_snapshots=indicator_snapshots,
             )
+
+            # 9. Snapshot live status to public dashboard feed (throttled, non-blocking)
+            try:
+                _decisions = outputs.get("trade_decisions", []) or []
+                last_d = _decisions[0] if _decisions else None
+                last_decision_payload = None
+                if last_d:
+                    last_decision_payload = {
+                        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "asset": last_d.get("asset"),
+                        "action": last_d.get("action"),
+                        "rationale": (last_d.get("rationale") or "")[:280],
+                    }
+                _live_record_snapshot(
+                    account_value=account_value,
+                    initial_balance=initial_value,
+                    open_positions=state.get("positions", []),
+                    last_decision=last_decision_payload,
+                    paper_mode=True,
+                )
+            except Exception as _e:
+                log.debug("live_status hook failed (non-fatal): %s", _e)
 
         except Exception as loop_err:
             log.exception("Loop iteration failed: %s", loop_err)
