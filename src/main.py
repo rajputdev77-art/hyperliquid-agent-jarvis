@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 
 import uvicorn
 
-from src.agent.decision_maker import DecisionMaker
+from src.agent import make_decision_maker
 from src.agent.opportunity_scanner import discover_opportunities
 from src.api import init_api
 from src.config_loader import CONFIG, validate_config
@@ -95,7 +95,7 @@ def _parse_assets(raw: str | None, cli_assets: list[str] | None) -> list[str]:
 # Main loop
 # --------------------------------------------------------------------
 
-async def trading_loop(broker: PaperBroker, agent: DecisionMaker, risk: RiskManager,
+async def trading_loop(broker: PaperBroker, agent, risk: RiskManager,
                        base_assets: list[str], interval_s: int,
                        scan_enabled: bool, scan_top_n: int) -> None:
     log.info("Starting loop — base=%s scan=%s top_n=%s interval=%ss",
@@ -380,7 +380,7 @@ def main() -> None:
                  db_path, api_port, model)
 
     broker = PaperBroker(provider=provider, db_path=db_path)
-    agent = DecisionMaker(hyperliquid=broker.hl, model_override=model)
+    agent = make_decision_maker(hyperliquid=broker.hl, model_override=model)
     risk = RiskManager()
     _start_api_thread(broker, port=api_port)
 

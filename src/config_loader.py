@@ -59,7 +59,8 @@ CONFIG = {
     "log_dir": _get("LOG_DIR", "./logs"),
     "log_level": _get("LOG_LEVEL", "INFO"),
 
-    # --- LLM (Gemini) ---
+    # --- LLM ---
+    # Provider: "gemini" (cloud free tier) or "ollama" (local self-hosted, free forever)
     "llm_provider": _get("LLM_PROVIDER", "gemini"),
     "gemini_api_key": _get("GEMINI_API_KEY"),
     "llm_model": _get("LLM_MODEL", "gemini-2.5-flash-lite"),
@@ -68,6 +69,10 @@ CONFIG = {
     "llm_model_crypto": _get("LLM_MODEL_CRYPTO"),
     "llm_model_stocks": _get("LLM_MODEL_STOCKS"),
     "max_tokens": _get_int("MAX_TOKENS", 4096),
+    # Ollama (only used when LLM_PROVIDER=ollama). On Oracle, the daemon
+    # runs locally so the default base URL works as-is.
+    "ollama_base_url": _get("OLLAMA_BASE_URL", "http://localhost:11434"),
+    "ollama_timeout_sec": _get_int("OLLAMA_TIMEOUT_SEC", 600),
 
     # --- Hyperliquid (read-only in paper mode; not required) ---
     "hyperliquid_private_key": _get("HYPERLIQUID_PRIVATE_KEY"),
@@ -104,11 +109,12 @@ CONFIG = {
 
 def validate_config() -> None:
     """Fail fast on misconfig. Called from main.py at boot."""
-    if CONFIG["llm_provider"] != "gemini":
+    provider = (CONFIG["llm_provider"] or "").lower()
+    if provider not in {"gemini", "ollama"}:
         raise RuntimeError(
-            f"Only Gemini is wired up. LLM_PROVIDER={CONFIG['llm_provider']}"
+            f"LLM_PROVIDER must be 'gemini' or 'ollama'. Got: {CONFIG['llm_provider']!r}"
         )
-    if not CONFIG["gemini_api_key"]:
+    if provider == "gemini" and not CONFIG["gemini_api_key"]:
         raise RuntimeError(
             "GEMINI_API_KEY missing. Get one free at https://aistudio.google.com/apikey"
         )

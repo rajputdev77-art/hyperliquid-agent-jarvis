@@ -54,3 +54,4 @@ hyperliquid-trading-agent-master/
 
 # Third-party binaries (cloudflared etc) — downloaded, not source
 bin/
+.claude/
