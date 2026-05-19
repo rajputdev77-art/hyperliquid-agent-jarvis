@@ -73,6 +73,8 @@ CONFIG = {
     # runs locally so the default base URL works as-is.
     "ollama_base_url": _get("OLLAMA_BASE_URL", "http://localhost:11434"),
     "ollama_timeout_sec": _get_int("OLLAMA_TIMEOUT_SEC", 600),
+    # Groq (used when LLM_PROVIDER=groq). Fast + generous free tier (~14k req/day).
+    "groq_api_key": _get("GROQ_API_KEY"),
 
     # --- Hyperliquid (read-only in paper mode; not required) ---
     "hyperliquid_private_key": _get("HYPERLIQUID_PRIVATE_KEY"),
@@ -110,13 +112,17 @@ CONFIG = {
 def validate_config() -> None:
     """Fail fast on misconfig. Called from main.py at boot."""
     provider = (CONFIG["llm_provider"] or "").lower()
-    if provider not in {"gemini", "ollama"}:
+    if provider not in {"gemini", "ollama", "groq"}:
         raise RuntimeError(
-            f"LLM_PROVIDER must be 'gemini' or 'ollama'. Got: {CONFIG['llm_provider']!r}"
+            f"LLM_PROVIDER must be 'gemini', 'ollama', or 'groq'. Got: {CONFIG['llm_provider']!r}"
         )
     if provider == "gemini" and not CONFIG["gemini_api_key"]:
         raise RuntimeError(
             "GEMINI_API_KEY missing. Get one free at https://aistudio.google.com/apikey"
+        )
+    if provider == "groq" and not CONFIG["groq_api_key"]:
+        raise RuntimeError(
+            "GROQ_API_KEY missing. Get one free at https://console.groq.com/keys"
         )
     if not CONFIG["assets"]:
         raise RuntimeError("ASSETS missing. Example: ASSETS=\"BTC ETH SOL\"")
