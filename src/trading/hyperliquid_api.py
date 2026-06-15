@@ -427,6 +427,26 @@ class HyperliquidAPI:
             mids = await self._retry(self.info.all_mids)
         return float(mids.get(asset, 0.0))
 
+    async def get_all_mids(self, timeout: float = 4.0) -> dict:
+        """Fetch ALL main-dex mid prices in ONE bounded HTTP call.
+
+        Uses aiohttp directly (not the SDK's thread-offloaded ``_retry`` path),
+        so a slow/unresponsive endpoint can never hang the event loop or leak
+        worker threads — a hard timeout guarantees a result or a prompt error.
+
+        Used by ``PaperBroker.get_user_state`` to mark every open position from a
+        single response instead of one ``all_mids`` call per position (which
+        serialized with retry backoff and made the /account and /positions API
+        endpoints time out). HIP-3 assets ("dex:SYM") are not in this main-dex
+        map; callers should fall back to entry price for any missing symbol.
+        """
+        url = f"{self.base_url}/info"
+        cfg = aiohttp.ClientTimeout(total=timeout)
+        async with aiohttp.ClientSession(timeout=cfg) as session:
+            async with session.post(url, json={"type": "allMids"}) as resp:
+                resp.raise_for_status()
+                return await resp.json()
+
     async def get_meta_and_ctxs(self, dex=None):
         """Return cached meta/context information, fetching once per lifecycle.
 

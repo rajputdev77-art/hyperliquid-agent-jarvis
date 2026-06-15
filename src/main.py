@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import logging.handlers
+import os
 import pathlib
 import signal
 import sys
@@ -25,12 +26,14 @@ from datetime import datetime, timezone
 
 import uvicorn
 
-from src.agent.decision_maker import DecisionMaker
+from src.agent import make_decision_maker
+from src.agent.opportunity_scanner import discover_opportunities
 from src.api import init_api
 from src.config_loader import CONFIG, validate_config
 from src.indicators.local_indicators import compute_all, last_n, latest
 from src.risk_manager import RiskManager
 from src.trading.paper_broker import PaperBroker
+from src.live_status import record_snapshot as _live_record_snapshot
 from src.utils.prompt_utils import json_default, round_or_none, round_series
 
 
@@ -92,12 +95,14 @@ def _parse_assets(raw: str | None, cli_assets: list[str] | None) -> list[str]:
 # Main loop
 # --------------------------------------------------------------------
 
-async def trading_loop(broker: PaperBroker, agent: DecisionMaker, risk: RiskManager,
-                       assets: list[str], interval_s: int) -> None:
-    log.info("Starting loop — assets=%s interval=%ss", assets, interval_s)
+async def trading_loop(broker: PaperBroker, agent, risk: RiskManager,
+                       base_assets: list[str], interval_s: int,
+                       scan_enabled: bool, scan_top_n: int) -> None:
+    log.info("Starting loop — base=%s scan=%s top_n=%s interval=%ss",
+             base_assets, scan_enabled, scan_top_n, interval_s)
     invocation = 0
     initial_value: float | None = None
-    price_history: dict[str, deque] = {a: deque(maxlen=60) for a in assets}
+    price_history: dict[str, deque] = {a: deque(maxlen=60) for a in base_assets}
 
     await broker.get_meta_and_ctxs()  # warm cache
 
@@ -117,16 +122,33 @@ async def trading_loop(broker: PaperBroker, agent: DecisionMaker, risk: RiskMana
                 if initial_value else 0.0
             )
 
-            # 3. Force-close ugly positions via risk manager
-            for ptc in risk.check_losing_positions(state["positions"]):
-                coin = ptc["coin"]
-                size = ptc["size"]
-                is_long = ptc["is_long"]
-                log.warning("RISK FORCE-CLOSE %s at %s%% loss", coin, ptc["loss_pct"])
-                if is_long:
-                    await broker.place_sell_order(coin, size)
-                else:
-                    await broker.place_buy_order(coin, size)
+            # 2b. Build dynamic asset list for this cycle.
+            # Pin base_assets + any open position so we never drop a live trade.
+            open_syms = [p.get("coin") for p in state["positions"] if p.get("coin")]
+            pinned = list(dict.fromkeys([*base_assets, *open_syms]))
+            if scan_enabled:
+                try:
+                    assets = await discover_opportunities(
+                        broker, top_n=scan_top_n, always_include=pinned
+                    )
+                except Exception as e:
+                    log.warning("Scanner failed, using pinned set: %s", e)
+                    assets = pinned
+            else:
+                assets = pinned
+            for a in assets:
+                if a not in price_history:
+                    price_history[a] = deque(maxlen=60)
+
+            # 3. Force-close ugly positions via risk manager.
+            # IMPORTANT: actually CLOSE via broker.close_position. The old code
+            # called place_sell_order/place_buy_order, which OPEN new opposite
+            # positions (the 1300+ VVV runaway) instead of closing the loser.
+            for coin in dict.fromkeys(
+                ptc["coin"] for ptc in risk.check_losing_positions(state["positions"]) if ptc.get("coin")
+            ):
+                log.warning("RISK FORCE-CLOSE %s", coin)
+                await broker.close_position(coin, reason="risk_force_close")
                 await broker.cancel_all_orders(coin)
 
             # 4. Gather indicators per asset
@@ -259,6 +281,28 @@ async def trading_loop(broker: PaperBroker, agent: DecisionMaker, risk: RiskMana
                 indicator_snapshots=indicator_snapshots,
             )
 
+            # 9. Snapshot live status to public dashboard feed (throttled, non-blocking)
+            try:
+                _decisions = outputs.get("trade_decisions", []) or []
+                last_d = _decisions[0] if _decisions else None
+                last_decision_payload = None
+                if last_d:
+                    last_decision_payload = {
+                        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "asset": last_d.get("asset"),
+                        "action": last_d.get("action"),
+                        "rationale": (last_d.get("rationale") or "")[:280],
+                    }
+                _live_record_snapshot(
+                    account_value=account_value,
+                    initial_balance=initial_value,
+                    open_positions=state.get("positions", []),
+                    last_decision=last_decision_payload,
+                    paper_mode=True,
+                )
+            except Exception as _e:
+                log.debug("live_status hook failed (non-fatal): %s", _e)
+
         except Exception as loop_err:
             log.exception("Loop iteration failed: %s", loop_err)
 
@@ -269,10 +313,10 @@ async def trading_loop(broker: PaperBroker, agent: DecisionMaker, risk: RiskMana
 # Boot
 # --------------------------------------------------------------------
 
-def _start_api_thread(broker: PaperBroker) -> threading.Thread:
+def _start_api_thread(broker: PaperBroker, port: int | None = None) -> threading.Thread:
     app = init_api(broker)
     host = CONFIG.get("api_host") or "0.0.0.0"
-    port = int(CONFIG.get("api_port") or 8000)
+    port = int(port if port is not None else (CONFIG.get("api_port") or 8000))
     cfg = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False)
     server = uvicorn.Server(cfg)
     t = threading.Thread(target=server.run, daemon=True, name="api")
@@ -292,18 +336,52 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="hyperliquid-agent-jarvis (paper)")
     parser.add_argument("--assets", nargs="+")
     parser.add_argument("--interval")
+    parser.add_argument("--market", choices=["hyperliquid", "alpaca"], default="hyperliquid",
+                        help="Which market to trade. Changes data source, asset list, DB, port.")
+    parser.add_argument("--port", type=int, default=None, help="API port override")
+    parser.add_argument("--db", default=None, help="Override DATABASE_PATH for this process")
     args = parser.parse_args()
 
-    assets = _parse_assets(CONFIG.get("assets"), args.assets)
-    interval = args.interval or CONFIG.get("interval") or "1h"
-    if not assets:
-        parser.error("ASSETS missing. Set in .env or pass --assets.")
-    interval_s = _interval_seconds(interval)
+    market = args.market
+    if market == "alpaca":
+        raw_assets = os.getenv("STOCK_ASSETS") or "SPY QQQ NVDA AAPL MSFT AMZN GOOG META TSLA AVGO"
+        default_interval = "1h"
+        default_port = 8001
+        default_db = "./data/trades_stocks.db"
+        scan_default = False  # scanner is hyperliquid-specific for now
+    else:
+        raw_assets = CONFIG.get("assets")
+        default_interval = CONFIG.get("interval") or "1h"
+        default_port = int(CONFIG.get("api_port") or 8000)
+        default_db = CONFIG.get("database_path") or "./data/trades.db"
+        scan_default = bool(CONFIG.get("scan_enabled"))
 
-    broker = PaperBroker()
-    agent = DecisionMaker(hyperliquid=broker.hl)
+    base_assets = _parse_assets(raw_assets, args.assets)
+    interval = args.interval or default_interval
+    if not base_assets:
+        parser.error("assets missing. Set ASSETS/STOCK_ASSETS in .env or pass --assets.")
+    interval_s = _interval_seconds(interval)
+    scan_enabled = scan_default if market == "hyperliquid" else False
+    scan_top_n = int(CONFIG.get("scan_top_n") or 15)
+    api_port = args.port or default_port
+    db_path = args.db or default_db
+
+    if market == "alpaca":
+        from src.trading.alpaca_api import AlpacaAPI
+        provider = AlpacaAPI()
+        model = CONFIG.get("llm_model_stocks") or CONFIG.get("llm_model")
+        log.info("Market=ALPACA stocks — provider=Alpaca, db=%s, port=%s, model=%s",
+                 db_path, api_port, model)
+    else:
+        provider = None  # PaperBroker defaults to HyperliquidAPI
+        model = CONFIG.get("llm_model_crypto") or CONFIG.get("llm_model")
+        log.info("Market=HYPERLIQUID crypto — db=%s, port=%s, model=%s",
+                 db_path, api_port, model)
+
+    broker = PaperBroker(provider=provider, db_path=db_path)
+    agent = make_decision_maker(hyperliquid=broker.hl, model_override=model)
     risk = RiskManager()
-    _start_api_thread(broker)
+    _start_api_thread(broker, port=api_port)
 
     def _bye(_signum=None, _frame=None):
         log.info("Stopping.")
@@ -312,7 +390,9 @@ def main() -> None:
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _bye)
 
-    asyncio.run(trading_loop(broker, agent, risk, assets, interval_s))
+    asyncio.run(trading_loop(
+        broker, agent, risk, base_assets, interval_s, scan_enabled, scan_top_n
+    ))
 
 
 if __name__ == "__main__":

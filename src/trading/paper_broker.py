@@ -113,15 +113,16 @@ class PaperBroker:
     Market-data methods delegate to an internal read-only `HyperliquidAPI`.
     """
 
-    def __init__(self) -> None:
-        self.db_path = pathlib.Path(CONFIG.get("database_path") or "./data/trades.db")
+    def __init__(self, provider: Any = None, db_path: str | None = None) -> None:
+        self.db_path = pathlib.Path(db_path or CONFIG.get("database_path") or "./data/trades.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.slippage_pct = float(CONFIG.get("paper_entry_slippage_pct") or 0.0)
         self.initial_balance = float(CONFIG.get("paper_starting_balance") or 1000.0)
         self._oid_seq = int(time.time() * 1000)  # monotonic fake order id
 
-        # Read-only market-data client
-        self.hl = HyperliquidAPI()
+        # Read-only market-data client. Defaults to Hyperliquid so crypto
+        # callers keep working. Stocks pass in an AlpacaAPI instance.
+        self.hl = provider if provider is not None else HyperliquidAPI()
 
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
@@ -264,6 +265,31 @@ class PaperBroker:
     async def place_sell_order(self, asset: str, amount: float, slippage: float = 0.01) -> dict:
         return await self._market_open(asset, is_buy=False, amount=amount)
 
+    async def close_position(self, asset: str, reason: str = "risk_force_close") -> int:
+        """Close ALL open positions for ``asset`` at the current mark price.
+
+        Force-close / risk-exit paths MUST use this. Previously they called
+        place_sell_order / place_buy_order to "close", but those go through
+        _market_open which OPENS a brand-new opposite position — so closing a
+        loser actually created more positions (the 1300+ VVV runaway). This
+        nets them out via _close_position instead. Returns the count closed.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM positions WHERE asset = ? AND status = 'open'", (asset,)
+        ).fetchall()
+        if not rows:
+            return 0
+        price = None
+        try:
+            mids = await self.hl.get_all_mids()
+            quote = mids.get(asset)
+            price = float(quote) if quote is not None else None
+        except Exception:
+            price = None
+        for r in rows:
+            self._close_position(r, price if price is not None else float(r["entry_price"]), reason)
+        return len(rows)
+
     async def place_limit_buy(self, asset: str, amount: float, limit_price: float, tif: str = "Gtc") -> dict:
         return self._record_limit(asset, is_buy=True, amount=amount, limit_price=limit_price)
 
@@ -312,6 +338,24 @@ class PaperBroker:
     # ------------------------------------------------------------------
 
     async def _market_open(self, asset: str, is_buy: bool, amount: float) -> dict:
+        # Anti-runaway backstop. A force-close bug once opened 1300+ duplicate
+        # positions; this makes that class of failure impossible regardless of
+        # caller: never stack a second open position in the same asset, and
+        # never exceed the hard concurrent cap. To add/flip exposure, the
+        # existing position must be closed first (broker.close_position).
+        hard_cap = int(CONFIG.get("max_concurrent_positions") or 10)
+        dup = self._conn.execute(
+            "SELECT COUNT(*) AS c FROM positions WHERE asset = ? AND status = 'open'", (asset,)
+        ).fetchone()["c"]
+        if dup > 0:
+            log.warning("[paper] refusing to open %s — already holding it (anti-stack guard)", asset)
+            return self._fake_order_response(self._next_oid(), resting=False, filled_px=0.0)
+        total = self._conn.execute(
+            "SELECT COUNT(*) AS c FROM positions WHERE status = 'open'"
+        ).fetchone()["c"]
+        if total >= hard_cap:
+            log.warning("[paper] refusing to open %s — at hard cap of %d open positions", asset, hard_cap)
+            return self._fake_order_response(self._next_oid(), resting=False, filled_px=0.0)
         px = await self.hl.get_current_price(asset)
         fill_px = self._apply_slippage(px, is_buy=is_buy)
         side = "long" if is_buy else "short"
@@ -391,10 +435,26 @@ class PaperBroker:
         account = self._account_row()
         positions_out: list[dict] = []
         total_unrealized = 0.0
-        for pos in self._open_positions():
+        open_positions = self._open_positions()
+        # Mark all positions from ONE bounded all_mids call. Previously this made
+        # one all_mids call PER position (serial, with retry backoff, no timeout),
+        # which hung the /account and /positions API endpoints. On any failure we
+        # fall back to entry prices so the endpoint always responds promptly.
+        mids: dict = {}
+        if open_positions:
             try:
-                px = await self.hl.get_current_price(pos["asset"])
-            except Exception:
+                mids = await self.hl.get_all_mids() or {}
+            except Exception as e:
+                logging.warning(
+                    "get_user_state: all_mids unavailable (%s); marking at entry price",
+                    type(e).__name__,
+                )
+                mids = {}
+        for pos in open_positions:
+            quote = mids.get(pos["asset"])
+            try:
+                px = float(quote) if quote is not None else float(pos["entry_price"])
+            except (TypeError, ValueError):
                 px = float(pos["entry_price"])
             qty = float(pos["size_asset"])
             entry = float(pos["entry_price"])

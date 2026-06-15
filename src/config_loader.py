@@ -59,11 +59,22 @@ CONFIG = {
     "log_dir": _get("LOG_DIR", "./logs"),
     "log_level": _get("LOG_LEVEL", "INFO"),
 
-    # --- LLM (Gemini) ---
+    # --- LLM ---
+    # Provider: "gemini" (cloud free tier) or "ollama" (local self-hosted, free forever)
     "llm_provider": _get("LLM_PROVIDER", "gemini"),
     "gemini_api_key": _get("GEMINI_API_KEY"),
-    "llm_model": _get("LLM_MODEL", "gemini-2.5-flash"),
+    "llm_model": _get("LLM_MODEL", "gemini-2.5-flash-lite"),
+    # Per-market overrides — fall back to llm_model if unset. Used so each
+    # bot consumes its own daily quota bucket on the Gemini free tier.
+    "llm_model_crypto": _get("LLM_MODEL_CRYPTO"),
+    "llm_model_stocks": _get("LLM_MODEL_STOCKS"),
     "max_tokens": _get_int("MAX_TOKENS", 4096),
+    # Ollama (only used when LLM_PROVIDER=ollama). On Oracle, the daemon
+    # runs locally so the default base URL works as-is.
+    "ollama_base_url": _get("OLLAMA_BASE_URL", "http://localhost:11434"),
+    "ollama_timeout_sec": _get_int("OLLAMA_TIMEOUT_SEC", 600),
+    # Groq (used when LLM_PROVIDER=groq). Fast + generous free tier (~14k req/day).
+    "groq_api_key": _get("GROQ_API_KEY"),
 
     # --- Hyperliquid (read-only in paper mode; not required) ---
     "hyperliquid_private_key": _get("HYPERLIQUID_PRIVATE_KEY"),
@@ -74,6 +85,13 @@ CONFIG = {
     # --- Runtime ---
     "assets": _get("ASSETS"),
     "interval": _get("INTERVAL", "1h"),
+
+    # --- Opportunity scanner (stage-1 funnel over all Hyperliquid perps) ---
+    "scan_enabled": _get_bool("SCAN_ENABLED", True),
+    "scan_top_n": _get_int("SCAN_TOP_N", 15),
+
+    # --- SL hygiene ---
+    "min_sl_distance_pct": _get_float("MIN_SL_DISTANCE_PCT", 2.0),
 
     # --- Risk ---
     "max_position_pct": _get("MAX_POSITION_PCT", "10"),
@@ -93,13 +111,18 @@ CONFIG = {
 
 def validate_config() -> None:
     """Fail fast on misconfig. Called from main.py at boot."""
-    if CONFIG["llm_provider"] != "gemini":
+    provider = (CONFIG["llm_provider"] or "").lower()
+    if provider not in {"gemini", "ollama", "groq"}:
         raise RuntimeError(
-            f"Only Gemini is wired up. LLM_PROVIDER={CONFIG['llm_provider']}"
+            f"LLM_PROVIDER must be 'gemini', 'ollama', or 'groq'. Got: {CONFIG['llm_provider']!r}"
         )
-    if not CONFIG["gemini_api_key"]:
+    if provider == "gemini" and not CONFIG["gemini_api_key"]:
         raise RuntimeError(
             "GEMINI_API_KEY missing. Get one free at https://aistudio.google.com/apikey"
+        )
+    if provider == "groq" and not CONFIG["groq_api_key"]:
+        raise RuntimeError(
+            "GROQ_API_KEY missing. Get one free at https://console.groq.com/keys"
         )
     if not CONFIG["assets"]:
         raise RuntimeError("ASSETS missing. Example: ASSETS=\"BTC ETH SOL\"")

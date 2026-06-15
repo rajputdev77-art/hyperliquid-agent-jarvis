@@ -12,8 +12,9 @@ python = ">=3.11,<3.15"
 # Market data (read-only use in paper mode)
 hyperliquid-python-sdk = "^0.17.0"
 
-# LLM
+# LLM (Gemini cloud — used by default on laptop)
 google-generativeai = "^0.8.3"
+# Ollama is consumed via plain HTTP (requests) — no extra SDK needed.
 
 # Core
 python-dotenv = "^1.0.1"

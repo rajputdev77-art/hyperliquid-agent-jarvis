@@ -94,12 +94,16 @@ _SYSTEM_PROMPT_TEMPLATE = (
 class DecisionMaker:
     """Gemini-backed replacement for Sanket's Claude `TradingAgent`."""
 
-    def __init__(self, hyperliquid=None):
+    def __init__(self, hyperliquid=None, model_override: str | None = None):
         api_key = CONFIG.get("gemini_api_key")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY missing. Set it in .env.")
         self.client = genai.Client(api_key=api_key)
-        self.model_name = CONFIG.get("llm_model") or "gemini-2.5-flash"
+        self.model_name = (
+            model_override
+            or CONFIG.get("llm_model")
+            or "gemini-2.5-flash-lite"
+        )
         self.max_tokens = int(CONFIG.get("max_tokens") or 4096)
         self.hyperliquid = hyperliquid  # not used for tool calls in this port
         self.log_dir = pathlib.Path(CONFIG.get("llm_log_dir") or "./data/llm_logs")

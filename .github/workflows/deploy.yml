@@ -1,0 +1,45 @@
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: [main, feat/scanner-alpaca]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.ORACLE_SSH_KEY }}" > ~/.ssh/oracle
+          chmod 600 ~/.ssh/oracle
+          ssh-keyscan -H "${{ secrets.ORACLE_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Pull latest + reinstall deps + restart on Oracle
+        run: |
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          ssh -i ~/.ssh/oracle "${{ secrets.ORACLE_SSH_USER }}@${{ secrets.ORACLE_HOST }}" "
+            set -e
+            cd /home/ubuntu/projects/trading
+            git fetch origin $BRANCH
+            git checkout $BRANCH
+            git reset --hard origin/$BRANCH
+            if [ -f requirements.txt ]; then
+              venv/bin/pip install -q -r requirements.txt
+            fi
+            sudo systemctl restart jarvis-crypto jarvis-stocks
+            sleep 5
+            systemctl is-active jarvis-crypto
+            systemctl is-active jarvis-stocks
+          "
+
+      - name: Health check
+        run: |
+          ssh -i ~/.ssh/oracle "${{ secrets.ORACLE_SSH_USER }}@${{ secrets.ORACLE_HOST }}" \
+            "curl -s -o /dev/null -w 'crypto health: %{http_code}\n' http://localhost:8000/health && \
+             curl -s -o /dev/null -w 'stocks health: %{http_code}\n' http://localhost:8001/health"

@@ -21,6 +21,10 @@ class RiskManager:
         self.max_total_exposure_pct = float(CONFIG.get("max_total_exposure_pct") or 50)
         self.daily_loss_circuit_breaker_pct = float(CONFIG.get("daily_loss_circuit_breaker_pct") or 10)
         self.mandatory_sl_pct = float(CONFIG.get("mandatory_sl_pct") or 5)
+        # Floor on how tight a stop can be. LLMs sometimes set 0.5–1% stops on
+        # noisy assets; market noise eats them and produces a string of small
+        # losses for no real reason. This widens any too-tight stop.
+        self.min_sl_distance_pct = float(CONFIG.get("min_sl_distance_pct") or 2.0)
         self.max_concurrent_positions = int(CONFIG.get("max_concurrent_positions") or 10)
         self.min_balance_reserve_pct = float(CONFIG.get("min_balance_reserve_pct") or 20)
 
@@ -127,15 +131,27 @@ class RiskManager:
 
     def enforce_stop_loss(self, sl_price: float | None, entry_price: float,
                            is_buy: bool) -> float:
-        """Ensure every trade has a stop-loss. Auto-set if missing."""
-        if sl_price is not None:
-            return sl_price
-        # Auto-set SL at mandatory_sl_pct from entry
-        sl_distance = entry_price * (self.mandatory_sl_pct / 100.0)
-        if is_buy:
-            return round(entry_price - sl_distance, 2)
+        """Ensure every trade has a stop-loss with a sensible minimum distance.
+
+        - If LLM omits SL entirely → set at mandatory_sl_pct.
+        - If LLM sets a stop closer than min_sl_distance_pct → widen it.
+        Without the floor, a 0.5% SL on a noisy asset bleeds the account.
+        """
+        min_distance = entry_price * (self.min_sl_distance_pct / 100.0)
+        if sl_price is None:
+            sl_distance = entry_price * (self.mandatory_sl_pct / 100.0)
+            sl_distance = max(sl_distance, min_distance)
         else:
-            return round(entry_price + sl_distance, 2)
+            # Validate LLM-provided SL is on the correct side and far enough.
+            current_distance = abs(entry_price - sl_price)
+            if current_distance < min_distance:
+                sl_distance = min_distance
+            else:
+                return sl_price
+        if is_buy:
+            return round(entry_price - sl_distance, 4)
+        else:
+            return round(entry_price + sl_distance, 4)
 
     # ------------------------------------------------------------------
     # Force-close losing positions
