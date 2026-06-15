@@ -140,16 +140,15 @@ async def trading_loop(broker: PaperBroker, agent, risk: RiskManager,
                 if a not in price_history:
                     price_history[a] = deque(maxlen=60)
 
-            # 3. Force-close ugly positions via risk manager
-            for ptc in risk.check_losing_positions(state["positions"]):
-                coin = ptc["coin"]
-                size = ptc["size"]
-                is_long = ptc["is_long"]
-                log.warning("RISK FORCE-CLOSE %s at %s%% loss", coin, ptc["loss_pct"])
-                if is_long:
-                    await broker.place_sell_order(coin, size)
-                else:
-                    await broker.place_buy_order(coin, size)
+            # 3. Force-close ugly positions via risk manager.
+            # IMPORTANT: actually CLOSE via broker.close_position. The old code
+            # called place_sell_order/place_buy_order, which OPEN new opposite
+            # positions (the 1300+ VVV runaway) instead of closing the loser.
+            for coin in dict.fromkeys(
+                ptc["coin"] for ptc in risk.check_losing_positions(state["positions"]) if ptc.get("coin")
+            ):
+                log.warning("RISK FORCE-CLOSE %s", coin)
+                await broker.close_position(coin, reason="risk_force_close")
                 await broker.cancel_all_orders(coin)
 
             # 4. Gather indicators per asset

@@ -265,6 +265,31 @@ class PaperBroker:
     async def place_sell_order(self, asset: str, amount: float, slippage: float = 0.01) -> dict:
         return await self._market_open(asset, is_buy=False, amount=amount)
 
+    async def close_position(self, asset: str, reason: str = "risk_force_close") -> int:
+        """Close ALL open positions for ``asset`` at the current mark price.
+
+        Force-close / risk-exit paths MUST use this. Previously they called
+        place_sell_order / place_buy_order to "close", but those go through
+        _market_open which OPENS a brand-new opposite position — so closing a
+        loser actually created more positions (the 1300+ VVV runaway). This
+        nets them out via _close_position instead. Returns the count closed.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM positions WHERE asset = ? AND status = 'open'", (asset,)
+        ).fetchall()
+        if not rows:
+            return 0
+        price = None
+        try:
+            mids = await self.hl.get_all_mids()
+            quote = mids.get(asset)
+            price = float(quote) if quote is not None else None
+        except Exception:
+            price = None
+        for r in rows:
+            self._close_position(r, price if price is not None else float(r["entry_price"]), reason)
+        return len(rows)
+
     async def place_limit_buy(self, asset: str, amount: float, limit_price: float, tif: str = "Gtc") -> dict:
         return self._record_limit(asset, is_buy=True, amount=amount, limit_price=limit_price)
 
@@ -313,6 +338,24 @@ class PaperBroker:
     # ------------------------------------------------------------------
 
     async def _market_open(self, asset: str, is_buy: bool, amount: float) -> dict:
+        # Anti-runaway backstop. A force-close bug once opened 1300+ duplicate
+        # positions; this makes that class of failure impossible regardless of
+        # caller: never stack a second open position in the same asset, and
+        # never exceed the hard concurrent cap. To add/flip exposure, the
+        # existing position must be closed first (broker.close_position).
+        hard_cap = int(CONFIG.get("max_concurrent_positions") or 10)
+        dup = self._conn.execute(
+            "SELECT COUNT(*) AS c FROM positions WHERE asset = ? AND status = 'open'", (asset,)
+        ).fetchone()["c"]
+        if dup > 0:
+            log.warning("[paper] refusing to open %s — already holding it (anti-stack guard)", asset)
+            return self._fake_order_response(self._next_oid(), resting=False, filled_px=0.0)
+        total = self._conn.execute(
+            "SELECT COUNT(*) AS c FROM positions WHERE status = 'open'"
+        ).fetchone()["c"]
+        if total >= hard_cap:
+            log.warning("[paper] refusing to open %s — at hard cap of %d open positions", asset, hard_cap)
+            return self._fake_order_response(self._next_oid(), resting=False, filled_px=0.0)
         px = await self.hl.get_current_price(asset)
         fill_px = self._apply_slippage(px, is_buy=is_buy)
         side = "long" if is_buy else "short"
