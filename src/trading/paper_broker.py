@@ -392,10 +392,26 @@ class PaperBroker:
         account = self._account_row()
         positions_out: list[dict] = []
         total_unrealized = 0.0
-        for pos in self._open_positions():
+        open_positions = self._open_positions()
+        # Mark all positions from ONE bounded all_mids call. Previously this made
+        # one all_mids call PER position (serial, with retry backoff, no timeout),
+        # which hung the /account and /positions API endpoints. On any failure we
+        # fall back to entry prices so the endpoint always responds promptly.
+        mids: dict = {}
+        if open_positions:
             try:
-                px = await self.hl.get_current_price(pos["asset"])
-            except Exception:
+                mids = await self.hl.get_all_mids() or {}
+            except Exception as e:
+                logging.warning(
+                    "get_user_state: all_mids unavailable (%s); marking at entry price",
+                    type(e).__name__,
+                )
+                mids = {}
+        for pos in open_positions:
+            quote = mids.get(pos["asset"])
+            try:
+                px = float(quote) if quote is not None else float(pos["entry_price"])
+            except (TypeError, ValueError):
                 px = float(pos["entry_price"])
             qty = float(pos["size_asset"])
             entry = float(pos["entry_price"])
